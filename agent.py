@@ -33,19 +33,23 @@ def analyze_and_send(raw_text):
 
 {raw_text}
 
-المطلوب:
-- حلل التنبيه كصفقة LONG فقط.
+حلل العملة حسب التنبيه، وقرر:
+BUY أو SELL أو NO TRADE.
+
+القواعد:
 - لا ترسل النص الخام.
-- إذا الصفقة ضعيفة أو البيانات ناقصة قل NO TRADE.
-- لا تعطيني شورت.
+- إذا البيانات ناقصة قل NO TRADE.
+- إذا الصفقة ضعيفة قل NO TRADE.
+- أعطني شراء أو بيع حسب اتجاه التنبيه والشارت المنطقي.
 - لا تعطيني صفقة بدون دخول ووقف وأهداف.
-- ركز على جودة الصفقة والهدف قبل الستوب.
+- ركز على جودة الصفقة، وضوح الستوب، وقوة الهدف.
+- لا تبالغ بالثقة.
 
 اكتب الرد بهذا الشكل فقط:
 
 📊 الرمز:
 ⏱ الفريم:
-📌 القرار: LONG أو NO TRADE
+📌 القرار: BUY / SELL / NO TRADE
 ✅ الجودة:
 🎯 الثقة:
 💰 الدخول:
@@ -53,7 +57,7 @@ def analyze_and_send(raw_text):
 🎯 TP1:
 🚀 TP2:
 ⌛ المدة المتوقعة:
-🧠 السبب:
+🧠 سبب القرار:
 ⚠️ ملاحظة:
 """
 
@@ -63,8 +67,7 @@ def analyze_and_send(raw_text):
             messages=[{"role": "user", "content": prompt}]
         )
 
-        result = response.content[0].text.strip()
-        send_msg(result)
+        send_msg(response.content[0].text.strip())
 
     except Exception as e:
         send_msg(f"❌ خطأ في Claude\n{str(e)}")
