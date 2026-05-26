@@ -3,15 +3,21 @@
 import os
 import requests
 from flask import Flask, request
+from anthropic import Anthropic
 
 app = Flask(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
+
+client = Anthropic(api_key=CLAUDE_API_KEY)
+
+MODEL = "claude-sonnet-4-5-20250929"
 
 
 def send_msg(text):
-    r = requests.post(
+    requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         data={
             "chat_id": CHAT_ID,
@@ -19,8 +25,6 @@ def send_msg(text):
         },
         timeout=30
     )
-    print("TELEGRAM STATUS:", r.status_code)
-    print("TELEGRAM RESPONSE:", r.text)
 
 
 @app.route("/")
@@ -30,21 +34,67 @@ def home():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
+
     try:
+
         raw_text = request.get_data(as_text=True)
 
-        send_msg(f"""🚨 ALERT RECEIVED
+        prompt = f"""
+أنت محلل تداول احترافي.
+
+هذا تنبيه من TradingView:
 
 {raw_text}
+
+حلل التنبيه وأعطني فقط:
+
+- هل الصفقة قوية أو لا
+- الاتجاه
+- نقطة الدخول
+- وقف الخسارة
+- TP1
+- TP2
+- جودة الصفقة
+- نسبة الثقة
+- مدة الصفقة
+
+إذا الصفقة ضعيفة قل فقط:
+NO TRADE
+"""
+
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=700,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+
+        result = response.content[0].text
+
+        send_msg(f"""
+🚨 CRT ALERT
+
+{result}
 """)
 
         return {"status": "ok"}, 200
 
     except Exception as e:
-        print("WEBHOOK ERROR:", str(e))
+
+        send_msg(f"❌ ERROR\n{str(e)}")
+
         return {"error": str(e)}, 500
 
 
 if __name__ == "__main__":
+
     port = int(os.environ.get("PORT", 5050))
-    app.run(host="0.0.0.0", port=port)
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
