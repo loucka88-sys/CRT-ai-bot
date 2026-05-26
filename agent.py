@@ -24,48 +24,50 @@ def send_msg(text):
     )
 
 
-def analyze_with_claude(raw_text):
+def analyze_and_send(raw_text):
     try:
         prompt = f"""
-أنت محلل تداول صارم.
+أنت محلل تداول محترف وصارم.
 
 وصل تنبيه CRT Pro من TradingView:
 
 {raw_text}
 
-حلله كصفقة LONG فقط.
+المطلوب:
+- حلل التنبيه كصفقة LONG فقط.
+- لا ترسل النص الخام.
+- إذا الصفقة ضعيفة أو البيانات ناقصة قل NO TRADE.
+- لا تعطيني شورت.
+- لا تعطيني صفقة بدون دخول ووقف وأهداف.
+- ركز على جودة الصفقة والهدف قبل الستوب.
 
-أعطني:
-- القرار: TRADE أو NO TRADE
-- الرمز
-- الفريم
-- الدخول
-- الستوب
-- TP1
-- TP2
-- الجودة
-- الثقة %
-- المدة المتوقعة
-- السبب
+اكتب الرد بهذا الشكل فقط:
 
-إذا البيانات ناقصة أو الصفقة ضعيفة قل NO TRADE.
+📊 الرمز:
+⏱ الفريم:
+📌 القرار: LONG أو NO TRADE
+✅ الجودة:
+🎯 الثقة:
+💰 الدخول:
+🛑 وقف الخسارة:
+🎯 TP1:
+🚀 TP2:
+⌛ المدة المتوقعة:
+🧠 السبب:
+⚠️ ملاحظة:
 """
 
         response = client.messages.create(
             model=MODEL,
-            max_tokens=700,
+            max_tokens=900,
             messages=[{"role": "user", "content": prompt}]
         )
 
-        result = response.content[0].text
-
-        send_msg(f"""🚨 CRT ALERT
-
-{result}
-""")
+        result = response.content[0].text.strip()
+        send_msg(result)
 
     except Exception as e:
-        send_msg(f"❌ CLAUDE ERROR\n{str(e)}")
+        send_msg(f"❌ خطأ في Claude\n{str(e)}")
 
 
 @app.route("/")
@@ -77,15 +79,8 @@ def home():
 def webhook():
     raw_text = request.get_data(as_text=True) or "NO DATA"
 
-    send_msg(f"""✅ وصل تنبيه CRT
-
-{raw_text}
-
-⏳ جاري تحليله عبر Claude...
-""")
-
     threading.Thread(
-        target=analyze_with_claude,
+        target=analyze_and_send,
         args=(raw_text,),
         daemon=True
     ).start()
