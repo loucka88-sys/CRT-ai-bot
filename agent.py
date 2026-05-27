@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 
-import os, re, base64, threading, requests
+import os
+import re
+import base64
+import threading
+import requests
+
 from flask import Flask, request
 from anthropic import Anthropic
 
@@ -12,9 +17,10 @@ CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
 BROWSERLESS_API_KEY = os.getenv("BROWSERLESS_API_KEY")
 
 MODEL = "claude-sonnet-4-5-20250929"
-client = Anthropic(api_key=CLAUDE_API_KEY)
 
-MEMORY = {}
+client = Anthropic(
+    api_key=CLAUDE_API_KEY
+)
 
 TIMEFRAMES = {
     "4H": "240",
@@ -23,54 +29,107 @@ TIMEFRAMES = {
     "5M": "5"
 }
 
+
 def send_msg(text):
+
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": str(text)},
+        data={
+            "chat_id": CHAT_ID,
+            "text": str(text)
+        },
         timeout=30
     )
 
-def extract_symbol(raw):
-    m = re.search(r"symbol=([A-Z0-9]+:[A-Z0-9]+)", raw)
-    if m:
-        return m.group(1)
 
-    m = re.search(r"\b(XAUUSD|XAGUSD|[A-Z0-9]{3,15}USDT)\b", raw)
+def extract_symbol(raw):
+
+    raw = raw.upper()
+
+    m = re.search(r'([A-Z0-9]{2,20}USDT)', raw)
+
     if m:
-        s = m.group(1)
-        if s in ["XAUUSD", "XAGUSD"]:
-            return f"OANDA:{s}"
-        if s.endswith("USDT"):
-            return f"BINANCE:{s}"
+        return f"BINANCE:{m.group(1)}"
+
+    m = re.search(
+        r'(XAUUSD|XAGUSD|EURUSD|GBPUSD|USDJPY|AUDUSD|USDCAD|USDCHF)',
+        raw
+    )
+
+    if m:
+        return f"OANDA:{m.group(1)}"
+
     return None
 
-def extract_price(raw):
-    m = re.search(r"price=([0-9.]+)", raw)
-    return m.group(1) if m else "UNKNOWN"
 
 def extract_tf(raw):
-    m = re.search(r"timeframe=([A-Za-z0-9]+)", raw)
+
+    raw = raw.upper()
+
+    if "4H" in raw:
+        return "240"
+
+    if "1H" in raw:
+        return "60"
+
+    if "15" in raw:
+        return "15"
+
+    if "5" in raw:
+        return "5"
+
+    return "15"
+
+
+def extract_price(raw):
+
+    m = re.search(r'([0-9]+\.[0-9]+)', raw)
+
     return m.group(1) if m else "UNKNOWN"
 
+
 def tv_url(symbol, tf):
+
     return f"https://www.tradingview.com/chart/?symbol={symbol}&interval={tf}"
 
+
 def screenshot(symbol, tf):
+
     endpoint = f"https://production-sfo.browserless.io/screenshot?token={BROWSERLESS_API_KEY}"
+
     payload = {
         "url": tv_url(symbol, tf),
-        "options": {"type": "png", "fullPage": False},
-        "gotoOptions": {"waitUntil": "networkidle2", "timeout": 45000},
-        "viewport": {"width": 1440, "height": 1000}
+        "options": {
+            "type": "png",
+            "fullPage": False
+        },
+        "gotoOptions": {
+            "waitUntil": "networkidle2",
+            "timeout": 45000
+        },
+        "viewport": {
+            "width": 1440,
+            "height": 1000
+        }
     }
 
-    r = requests.post(endpoint, json=payload, timeout=80)
+    r = requests.post(
+        endpoint,
+        json=payload,
+        timeout=80
+    )
+
     if r.status_code != 200:
-        raise Exception(f"Browserless error {r.status_code}: {r.text[:400]}")
+
+        raise Exception(
+            f"Browserless error {r.status_code}: {r.text[:400]}"
+        )
 
     return base64.b64encode(r.content).decode("utf-8")
 
+
 def img_block(b64):
+
     return {
         "type": "image",
         "source": {
@@ -80,24 +139,29 @@ def img_block(b64):
         }
     }
 
+
 def analyze_and_send(raw_text):
+
     try:
+
         symbol = extract_symbol(raw_text)
         trigger_tf = extract_tf(raw_text)
         trigger_price = extract_price(raw_text)
 
         if not symbol:
-            send_msg("⚠️ ما قدرت أستخرج الرمز. تأكد من رسالة التنبيه فيها symbol={{exchange}}:{{ticker}}")
-            return
 
-        old_memory = MEMORY.get(symbol, "لا توجد ذاكرة سابقة لهذا الأصل.")
+            send_msg(
+                "⚠️ لم أستطع استخراج الرمز من التنبيه."
+            )
+
+            return
 
         content = [{
             "type": "text",
             "text": f"""
 وصل تنبيه CRT من TradingView.
 
-نص التنبيه:
+التنبيه:
 {raw_text}
 
 الأصل:
@@ -106,145 +170,113 @@ def analyze_and_send(raw_text):
 فريم التنبيه:
 {trigger_tf}
 
-سعر التنبيه:
+السعر:
 {trigger_price}
 
-ذاكرة آخر تحليل لهذا الأصل:
-{old_memory}
-
-اعتبر التنبيه مجرد رادار. الآن افحص الفريمات بصريًا واستخرج الحركة القادمة.
+تنبيه CRT مجرد Radar.
+حلل الشارتات بصريًا Top-Down ثم أعطني قرارًا واحدًا فقط.
 """
         }]
 
         for name, tf in TIMEFRAMES.items():
+
             b64 = screenshot(symbol, tf)
-            content.append({"type": "text", "text": f"صورة {symbol} على فريم {name}"})
-            content.append(img_block(b64))
+
+            content.append({
+                "type": "text",
+                "text": f"{symbol} timeframe {name}"
+            })
+
+            content.append(
+                img_block(b64)
+            )
 
         prompt = """
-أنت Fractal Trading Engine + محلل تداول محترف.
+أنت محلل تداول احترافي.
 
-مهمتك ليست تقييم التنبيه فقط.
-مهمتك توقع الحركة القادمة واستخراج أفضل خطة دخول من الشارت.
+تنبيه CRT مجرد Radar.
+حلل الشارتات بصريًا Top-Down:
+4H → 1H → 15M → 5M
 
-استخدم أسلوبك بحرية:
-- Price Action
-- Market Structure
-- Liquidity
-- CRT
+اعتمد على:
+- الاتجاه
+- الهيكل
+- السيولة
 - MSS / CISD
-- OTE
-- Waves
-- Fractal rhythm
-- Expansion / Correction
-- Supply & Demand
-- Momentum
+- مناطق العرض والطلب
+- OTE / Premium / Discount
 
-افحص الفريمات بهذا المنطق:
+القواعد:
 
-4H:
-حدد الاتجاه والسياق الأكبر. هل الحركة الحالية تصحيح أم بداية انعكاس؟
+- قرار واحد فقط.
+- ممنوع سيناريوهين.
+- ممنوع BUY و SELL معًا.
+- إذا السوق سيئ = NO TRADE.
+- إذا محتار = WAIT.
+- إذا الصفقة ممتازة أعط:
+BUY MARKET / SELL MARKET / BUY LIMIT / SELL LIMIT
 
-1H:
-حدد البنية والسيولة. هل هناك Sweep أو منطقة قرار؟
+- لا تعط صفقة RR أقل من 1:2.
+- لا تشرح كثير.
+- لا تعط تحليل طويل.
+- ركز فقط على التنفيذ.
 
-15M:
-حدد النسخة المصغرة. هل الحركة الحالية تكرر حركة أكبر؟
+أرسل النتيجة بهذا الشكل فقط:
 
-5M:
-حدد التريغر. هل يوجد MSS/CISD أو دخول جاهز أو ننتظر Pullback؟
-
-Fractal Engine:
-اسأل نفسك:
-- هل 5M نسخة مصغرة من 15M؟
-- هل 15M ينسخ 1H؟
-- هل 1H يتماشى مع 4H؟
-- ما السيناريو الأقرب: Sweep → MSS → Pullback → Expansion؟
-- هل الحركة القادمة صعود أم نزول؟
-- هل الدخول الآن أم Limit أم انتظار؟
-
-قراراتك:
-BUY MARKET
-SELL MARKET
-BUY LIMIT
-SELL LIMIT
-WAIT
-NO TRADE
-
-قواعد:
-- لا تكن متشددًا لدرجة ترفض كل شيء.
-- لا تكن متهورًا.
-- إذا الدخول الحالي سيئ لكن فيه منطقة ممتازة، أعط LIMIT.
-- إذا الفراكتال ناقص، أعط WAIT مع الشرط المطلوب.
-- إذا الصفقة غير واضحة، NO TRADE.
-- لازم الستوب والهدف منطقيين.
-- لا تستخدم كلام طويل.
-
-صيغة Telegram النهائية:
-
-🚨 CRT AI Fractal Sniper
+🚨 CRT AI
 
 📊 الأصل:
-⏱ فريم التنبيه:
 📌 القرار:
-🎚 النوع: STRONG / AGGRESSIVE / LIMIT / WAIT / NO TRADE
-✅ الجودة:
-🎯 الثقة:
 
 💰 الدخول:
 🛑 الستوب:
 🎯 TP1:
 🚀 TP2:
+
 📐 R:R:
-⌛ المدة:
+🎯 الثقة:
 
-🧬 قراءة الفراكتال:
--
-
-🧭 الفريمات:
-4H:
-1H:
-15M:
-5M:
-
-🧠 الحركة المتوقعة:
--
-
-⚠️ التنفيذ:
--
-
-🧾 ذاكرة للمتابعة:
-اكتب جملة قصيرة جدًا تصلح أن تُحفظ للمرات القادمة.
+🧠 السبب:
+سطرين فقط.
 """
 
-        content.append({"type": "text", "text": prompt})
+        content.append({
+            "type": "text",
+            "text": prompt
+        })
 
         response = client.messages.create(
             model=MODEL,
-            max_tokens=1700,
-            messages=[{"role": "user", "content": content}]
+            max_tokens=900,
+            messages=[
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ]
         )
 
         result = response.content[0].text.strip()
 
-        memory_match = re.search(r"🧾 ذاكرة للمتابعة:\s*(.*)", result, re.S)
-        if memory_match:
-            MEMORY[symbol] = memory_match.group(1).strip()[:700]
-        else:
-            MEMORY[symbol] = result[-700:]
-
         send_msg(result)
 
     except Exception as e:
-        send_msg(f"❌ خطأ في التحليل\n{str(e)}")
+
+        send_msg(
+            f"❌ خطأ في التحليل\n{str(e)}"
+        )
+
 
 @app.route("/")
 def home():
+
     return "CRT AI BOT RUNNING"
+
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    raw_text = request.get_data(as_text=True) or "NO DATA"
+
+    raw_text = request.get_data(as_text=True)
 
     threading.Thread(
         target=analyze_and_send,
@@ -252,8 +284,18 @@ def webhook():
         daemon=True
     ).start()
 
-    return {"status": "received"}, 200
+    return {
+        "status": "received"
+    }, 200
+
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5050))
-    app.run(host="0.0.0.0", port=port)
+
+    port = int(
+        os.environ.get("PORT", 5050)
+    )
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
