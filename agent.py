@@ -29,10 +29,7 @@ ANALYSIS_TIMEFRAMES = {
 def send_msg(text):
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={
-            "chat_id": CHAT_ID,
-            "text": str(text)
-        },
+        data={"chat_id": CHAT_ID, "text": str(text)},
         timeout=30
     )
 
@@ -45,13 +42,10 @@ def extract_symbol(raw):
     m = re.search(r"\b([A-Z]{3,10}USD|[A-Z0-9]{3,15}USDT)\b", raw)
     if m:
         s = m.group(1)
-
         if s in ["XAUUSD", "XAGUSD"]:
             return f"OANDA:{s}"
-
         if s.endswith("USDT"):
             return f"BINANCE:{s}"
-
         return s
 
     return None
@@ -59,18 +53,12 @@ def extract_symbol(raw):
 
 def extract_trigger_timeframe(raw):
     m = re.search(r"timeframe=([A-Za-z0-9]+)", raw)
-    if m:
-        return m.group(1)
-
-    return "UNKNOWN"
+    return m.group(1) if m else "UNKNOWN"
 
 
 def extract_price(raw):
     m = re.search(r"price=([0-9.]+)", raw)
-    if m:
-        return m.group(1)
-
-    return "UNKNOWN"
+    return m.group(1) if m else "UNKNOWN"
 
 
 def tradingview_url(symbol, timeframe):
@@ -78,24 +66,13 @@ def tradingview_url(symbol, timeframe):
 
 
 def screenshot_chart(symbol, timeframe_code):
-    url = tradingview_url(symbol, timeframe_code)
-
     endpoint = f"https://production-sfo.browserless.io/screenshot?token={BROWSERLESS_API_KEY}"
 
     payload = {
-        "url": url,
-        "options": {
-            "type": "png",
-            "fullPage": False
-        },
-        "gotoOptions": {
-            "waitUntil": "networkidle2",
-            "timeout": 45000
-        },
-        "viewport": {
-            "width": 1440,
-            "height": 1000
-        }
+        "url": tradingview_url(symbol, timeframe_code),
+        "options": {"type": "png", "fullPage": False},
+        "gotoOptions": {"waitUntil": "networkidle2", "timeout": 45000},
+        "viewport": {"width": 1440, "height": 1000}
     }
 
     r = requests.post(endpoint, json=payload, timeout=70)
@@ -126,14 +103,12 @@ def analyze_and_send(raw_text):
         if not symbol:
             send_msg(
                 "⚠️ وصل تنبيه CRT لكن ما قدرت أستخرج الرمز.\n"
-                "لازم رسالة TradingView تحتوي:\n"
+                "رسالة TradingView لازم تحتوي:\n"
                 "symbol={{exchange}}:{{ticker}}"
             )
             return
 
-        content = []
-
-        content.append({
+        content = [{
             "type": "text",
             "text": f"""
 وصل تنبيه CRT Pro من TradingView.
@@ -141,7 +116,7 @@ def analyze_and_send(raw_text):
 نص التنبيه:
 {raw_text}
 
-الرمز المستخرج:
+الرمز:
 {symbol}
 
 فريم التنبيه:
@@ -150,12 +125,9 @@ def analyze_and_send(raw_text):
 سعر التنبيه:
 {trigger_price}
 
-المطلوب منك:
-اعتبر التنبيه مجرد رادار يقول: هنا فيه شيء يحصل.
-لا تدخل بناءً على التنبيه وحده.
-حلل الصور القادمة على الفريمات المتعددة.
+اعتبر التنبيه رادار فقط. حلل الشارتات التالية بنفسك.
 """
-        })
+        }]
 
         for tf_name, tf_code in ANALYSIS_TIMEFRAMES.items():
             image_b64 = screenshot_chart(symbol, tf_code)
@@ -168,55 +140,34 @@ def analyze_and_send(raw_text):
             content.append(image_block(image_b64))
 
         prompt = """
-أنت محلل تداول محترف جدًا وصارم، تتصرف كصياد دخول لا كموزع إشارات.
+أنت محلل تداول محترف ومبدع. استخدم أفضل أسلوب تراه مناسبًا من:
+Price Action, Market Structure, Liquidity, CRT, MSS, CISD, OTE, Waves, Fractals, Momentum.
 
-هدفك:
-إذا وصل CRT Alert فهذا يعني فقط أن هناك فرصة محتملة.
-مهمتك الآن أن تنزل للفريمات الأصغر وتحدد هل يوجد أفضل دخول فعلي أم لا.
+لا تتقيد بطريقة واحدة.
+حلل كأنك متداول بشري خبير يبحث عن أفضل فرصة دخول بعد تنبيه CRT.
 
-حلل الفريمات بهذا الترتيب:
+الفريمات المتاحة:
+4H / 1H / 15M / 5M
 
-1) 4H:
-- الاتجاه العام
-- هل السوق صاعد أو هابط أو رينج
-- هل CRT مع الاتجاه أو ضد الاتجاه
+المطلوب:
+- افهم الاتجاه والسياق من 4H و 1H.
+- استخرج منطقة الدخول من 15M.
+- دقق التريغر والستوب من 5M.
+- قرر BUY أو SELL أو WAIT أو NO TRADE.
+- إذا الفرصة جيدة لكن مخاطرتها أعلى، اكتب AGGRESSIVE.
+- إذا الدخول الحالي غير مناسب لكن فيه منطقة أفضل، أعطني WAIT مع منطقة الدخول.
+- لا تكن متشددًا زيادة ولا متهورًا.
+- لا تعطيني صفقة بدون وقف وأهداف منطقية.
 
-2) 1H:
-- بنية السوق
-- هل هناك Sweep أو Liquidity واضح
-- هل يوجد منطقة طلب/عرض مهمة
-
-3) 15M:
-- منطقة الدخول المحتملة
-- هل السعر في OTE أو عند منطقة منطقية
-- هل الدخول فات أو ما زال صالح
-
-4) 5M:
-- ابحث عن MSS / CISD / Sweep
-- حدد أفضل دخول دقيق
-- حدد وقف خسارة منطقي خلف ذيل/قاع/قمة واضحة
-
-قواعد صارمة:
-- مسموح BUY أو SELL أو NO TRADE.
-- لا تعطيني صفقة إذا الفريمات غير متوافقة.
-- لا تعطيني صفقة إذا السعر في منتصف الرينج.
-- لا تعطيني صفقة إذا الستوب غير واضح.
-- لا تعطيني صفقة إذا الهدف قبل الستوب غير منطقي.
-- لا تعطيني صفقة إذا Risk/Reward أقل من 1:2.
-- لا تعطيني صفقة إذا فات الدخول أو وصل الهدف.
-- إذا أفضل قرار هو الانتظار، اكتب NO TRADE مع خطة انتظار مختصرة.
-- لا تبالغ بالثقة.
-- لا تكتب حشو.
-
-صيغة الرسالة للتليقرام يجب أن تكون واضحة وجميلة:
+صيغة Telegram المطلوبة، مختصرة وواضحة:
 
 🚨 CRT AI Sniper
 
 📊 الأصل:
-⏱ تنبيه CRT:
-🧭 الاتجاه العام:
-📌 القرار: BUY / SELL / NO TRADE
-✅ الجودة: A+ / A / B / C
+⏱ فريم التنبيه:
+📌 القرار: BUY / SELL / WAIT / NO TRADE
+🎚 النوع: STRONG / AGGRESSIVE / WAIT / NO TRADE
+✅ الجودة:
 🎯 الثقة:
 
 💰 أفضل دخول:
@@ -226,34 +177,27 @@ def analyze_and_send(raw_text):
 📐 R:R:
 ⌛ المدة المتوقعة:
 
-🔎 قراءة الفريمات:
+🧠 التحليل المختصر:
+-
+
+🧭 الفريمات:
 4H:
 1H:
 15M:
 5M:
 
-🧠 سبب القرار:
-⚠️ ملاحظة التنفيذ:
+⚠️ التنفيذ:
 """
 
-        content.append({
-            "type": "text",
-            "text": prompt
-        })
+        content.append({"type": "text", "text": prompt})
 
         response = client.messages.create(
             model=MODEL,
-            max_tokens=1500,
-            messages=[
-                {
-                    "role": "user",
-                    "content": content
-                }
-            ]
+            max_tokens=1300,
+            messages=[{"role": "user", "content": content}]
         )
 
-        result = response.content[0].text.strip()
-        send_msg(result)
+        send_msg(response.content[0].text.strip())
 
     except Exception as e:
         send_msg(f"❌ خطأ في التحليل\n{str(e)}")
