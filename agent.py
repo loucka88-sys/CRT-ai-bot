@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 
-import os, re, base64, threading, requests
+import os
+import re
+import base64
+import threading
+import requests
 from flask import Flask, request
 from anthropic import Anthropic
 
@@ -14,46 +18,67 @@ BROWSERLESS_API_KEY = os.getenv("BROWSERLESS_API_KEY")
 MODEL = "claude-sonnet-4-5-20250929"
 client = Anthropic(api_key=CLAUDE_API_KEY)
 
+ANALYSIS_TIMEFRAMES = {
+    "4H": "240",
+    "1H": "60",
+    "15M": "15",
+    "5M": "5"
+}
+
+
 def send_msg(text):
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": str(text)},
+        data={
+            "chat_id": CHAT_ID,
+            "text": str(text)
+        },
         timeout=30
     )
 
+
 def extract_symbol(raw):
-    m = re.search(r"symbol=([A-Z0-9]+:[A-Z0-9]+|[A-Z]{3,10}USD|[A-Z0-9]{3,15})", raw)
+    m = re.search(r"symbol=([A-Z0-9]+:[A-Z0-9]+)", raw)
     if m:
         return m.group(1)
 
-    pairs = re.findall(r"\b([A-Z]{3,10}USD|XAUUSD|XAGUSD|BTCUSDT|ETHUSDT|SOLUSDT)\b", raw)
-    if pairs:
-        s = pairs[0]
-        if ":" not in s:
-            if s in ["XAUUSD", "XAGUSD"]:
-                return f"OANDA:{s}"
+    m = re.search(r"\b([A-Z]{3,10}USD|[A-Z0-9]{3,15}USDT)\b", raw)
+    if m:
+        s = m.group(1)
+
+        if s in ["XAUUSD", "XAGUSD"]:
+            return f"OANDA:{s}"
+
+        if s.endswith("USDT"):
             return f"BINANCE:{s}"
+
         return s
 
     return None
 
-def extract_timeframe(raw):
+
+def extract_trigger_timeframe(raw):
     m = re.search(r"timeframe=([A-Za-z0-9]+)", raw)
     if m:
         return m.group(1)
 
-    m = re.search(r"\b(1m|3m|5m|15m|30m|1H|4H|1D|D|60|240|15)\b", raw, re.I)
+    return "UNKNOWN"
+
+
+def extract_price(raw):
+    m = re.search(r"price=([0-9.]+)", raw)
     if m:
-        tf = m.group(1).upper()
-        return {"1H": "60", "4H": "240", "15M": "15", "1M": "1"}.get(tf, tf)
+        return m.group(1)
 
-    return "60"
+    return "UNKNOWN"
 
-def tv_url(symbol, timeframe):
+
+def tradingview_url(symbol, timeframe):
     return f"https://www.tradingview.com/chart/?symbol={symbol}&interval={timeframe}"
 
-def take_screenshot(symbol, timeframe):
-    url = tv_url(symbol, timeframe)
+
+def screenshot_chart(symbol, timeframe_code):
+    url = tradingview_url(symbol, timeframe_code)
 
     endpoint = f"https://production-sfo.browserless.io/screenshot?token={BROWSERLESS_API_KEY}"
 
@@ -80,94 +105,164 @@ def take_screenshot(symbol, timeframe):
 
     return base64.b64encode(r.content).decode("utf-8")
 
+
+def image_block(image_b64):
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": image_b64
+        }
+    }
+
+
 def analyze_and_send(raw_text):
     try:
         symbol = extract_symbol(raw_text)
-        timeframe = extract_timeframe(raw_text)
+        trigger_tf = extract_trigger_timeframe(raw_text)
+        trigger_price = extract_price(raw_text)
 
         if not symbol:
-            send_msg("⚠️ وصل تنبيه لكن ما قدرت أستخرج الرمز. لازم رسالة التنبيه تحتوي symbol أو اسم العملة.")
+            send_msg(
+                "⚠️ وصل تنبيه CRT لكن ما قدرت أستخرج الرمز.\n"
+                "لازم رسالة TradingView تحتوي:\n"
+                "symbol={{exchange}}:{{ticker}}"
+            )
             return
 
-        image_b64 = take_screenshot(symbol, timeframe)
+        content = []
 
-        prompt = f"""
-أنت أعظم محلل تداول بشري صارم، مدير مخاطر قبل أن تكون صياد فرص.
+        content.append({
+            "type": "text",
+            "text": f"""
+وصل تنبيه CRT Pro من TradingView.
 
-وصل تنبيه CRT Pro:
+نص التنبيه:
 {raw_text}
 
-الشارت المرفق هو {symbol} على فريم {timeframe}.
+الرمز المستخرج:
+{symbol}
 
-حلل الصورة بنفسك، لا تعتمد على التنبيه فقط.
+فريم التنبيه:
+{trigger_tf}
 
-افحص:
-1. الاتجاه العام.
-2. هل CRT مع الاتجاه أو ضده.
-3. Sweep / Liquidity.
-4. MSS / CISD.
-5. OTE أو منطقة دخول منطقية.
-6. وضوح الستوب.
-7. هل الهدف قبل الستوب منطقي.
-8. Risk/Reward لا يقل عن 1:2.
-9. هل السعر تأخر وفات الدخول.
-10. هل الفريم مناسب أم ضوضاء.
+سعر التنبيه:
+{trigger_price}
 
-قراراتك فقط:
-BUY / SELL / NO TRADE
+المطلوب منك:
+اعتبر التنبيه مجرد رادار يقول: هنا فيه شيء يحصل.
+لا تدخل بناءً على التنبيه وحده.
+حلل الصور القادمة على الفريمات المتعددة.
+"""
+        })
 
-إذا الصفقة ليست ممتازة قل NO TRADE.
+        for tf_name, tf_code in ANALYSIS_TIMEFRAMES.items():
+            image_b64 = screenshot_chart(symbol, tf_code)
 
-اكتب الرسالة للتليقرام بهذا الشكل الجميل فقط بدون حشو:
+            content.append({
+                "type": "text",
+                "text": f"صورة {symbol} على فريم {tf_name}"
+            })
 
-🚨 توصية CRT AI
+            content.append(image_block(image_b64))
+
+        prompt = """
+أنت محلل تداول محترف جدًا وصارم، تتصرف كصياد دخول لا كموزع إشارات.
+
+هدفك:
+إذا وصل CRT Alert فهذا يعني فقط أن هناك فرصة محتملة.
+مهمتك الآن أن تنزل للفريمات الأصغر وتحدد هل يوجد أفضل دخول فعلي أم لا.
+
+حلل الفريمات بهذا الترتيب:
+
+1) 4H:
+- الاتجاه العام
+- هل السوق صاعد أو هابط أو رينج
+- هل CRT مع الاتجاه أو ضد الاتجاه
+
+2) 1H:
+- بنية السوق
+- هل هناك Sweep أو Liquidity واضح
+- هل يوجد منطقة طلب/عرض مهمة
+
+3) 15M:
+- منطقة الدخول المحتملة
+- هل السعر في OTE أو عند منطقة منطقية
+- هل الدخول فات أو ما زال صالح
+
+4) 5M:
+- ابحث عن MSS / CISD / Sweep
+- حدد أفضل دخول دقيق
+- حدد وقف خسارة منطقي خلف ذيل/قاع/قمة واضحة
+
+قواعد صارمة:
+- مسموح BUY أو SELL أو NO TRADE.
+- لا تعطيني صفقة إذا الفريمات غير متوافقة.
+- لا تعطيني صفقة إذا السعر في منتصف الرينج.
+- لا تعطيني صفقة إذا الستوب غير واضح.
+- لا تعطيني صفقة إذا الهدف قبل الستوب غير منطقي.
+- لا تعطيني صفقة إذا Risk/Reward أقل من 1:2.
+- لا تعطيني صفقة إذا فات الدخول أو وصل الهدف.
+- إذا أفضل قرار هو الانتظار، اكتب NO TRADE مع خطة انتظار مختصرة.
+- لا تبالغ بالثقة.
+- لا تكتب حشو.
+
+صيغة الرسالة للتليقرام يجب أن تكون واضحة وجميلة:
+
+🚨 CRT AI Sniper
 
 📊 الأصل:
-⏱ الفريم:
-📌 القرار:
-✅ الجودة:
+⏱ تنبيه CRT:
+🧭 الاتجاه العام:
+📌 القرار: BUY / SELL / NO TRADE
+✅ الجودة: A+ / A / B / C
 🎯 الثقة:
 
-💰 الدخول:
+💰 أفضل دخول:
 🛑 وقف الخسارة:
-🎯 الهدف الأول:
-🚀 الهدف الثاني:
+🎯 TP1:
+🚀 TP2:
+📐 R:R:
 ⌛ المدة المتوقعة:
 
+🔎 قراءة الفريمات:
+4H:
+1H:
+15M:
+5M:
+
 🧠 سبب القرار:
-⚠️ ملاحظة:
+⚠️ ملاحظة التنفيذ:
 """
+
+        content.append({
+            "type": "text",
+            "text": prompt
+        })
 
         response = client.messages.create(
             model=MODEL,
-            max_tokens=1200,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": image_b64
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": prompt
-                    }
-                ]
-            }]
+            max_tokens=1500,
+            messages=[
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ]
         )
 
-        send_msg(response.content[0].text.strip())
+        result = response.content[0].text.strip()
+        send_msg(result)
 
     except Exception as e:
         send_msg(f"❌ خطأ في التحليل\n{str(e)}")
 
+
 @app.route("/")
 def home():
     return "CRT AI BOT RUNNING"
+
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -180,6 +275,7 @@ def webhook():
     ).start()
 
     return {"status": "received"}, 200
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
